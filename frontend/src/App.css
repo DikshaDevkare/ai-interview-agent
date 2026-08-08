@@ -1,0 +1,9 @@
+#root { min-height: 100vh; }
+.app-shell { width: min(960px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #d9dee8; padding-bottom: 1rem; }
+.brand { color: #172033; font-weight: 700; text-decoration: none; }
+nav { display: flex; gap: 1rem; }
+nav a { color: #41516d; }
+.page { padding: 4rem 0; }
+.page h1 { margin: 0 0 .75rem; }
+.page p { color: #53627a; line-height: 1.6; }
