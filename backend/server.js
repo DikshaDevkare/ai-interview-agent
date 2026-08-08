@@ -23,7 +23,7 @@ app.get('/api/candidates/:candidateId/plan', (req, res) => {
   res.json(createTopicPlan(candidate, getCurriculum()))
 })
 
-app.post('/api/interview', (req, res) => {
+app.post('/api/interview', async (req, res) => {
   const { sessionId, candidate, message } = req.body ?? {}
 
   if (typeof sessionId !== 'string' || !sessionId.trim()) {
@@ -37,7 +37,7 @@ app.post('/api/interview', (req, res) => {
     }
 
     try {
-      return res.json(initializeInterview({ sessionId, candidate, curriculum: getCurriculum() }))
+      return res.json(await initializeInterview({ sessionId, candidate, curriculum: getCurriculum() }))
     } catch (error) {
       return res.status(400).json({ error: error.message })
     }
@@ -50,7 +50,7 @@ app.post('/api/interview', (req, res) => {
     return res.status(400).json({ error: 'message must be a non-empty string for an existing session' })
   }
 
-  return res.json(processInterviewAnswer(session, message))
+  return res.json(await processInterviewAnswer(session, message))
 })
 
 app.listen(port, () => {

@@ -1,10 +1,13 @@
 import { createTopicPlan } from './topicPlan.js'
+import { generateInterviewTurn } from './gemini.js'
 import {
   addTurn,
   advanceSession,
   completeSession,
   createSession,
+  recordInterviewerQuestion,
   recordAnswer,
+  setCurrentQuestion,
 } from '../sessions/sessionStore.js'
 
 const INTERVIEW_DAY_COUNT = 4
@@ -69,6 +72,56 @@ function questionReply(question) {
   return question.prompt
 }
 
+function turnMatchesTopic(turn, topic) {
+  return turn.day === topic.day && turn.topic.trim().toLowerCase() === topic.title.toLowerCase()
+}
+
+function buildGeminiContext(session, latestCandidateAnswer, nextQuestion) {
+  return {
+    candidateProfile: session.candidate.member,
+    personalizedTopicPlan: session.topicPlan,
+    currentCurriculumTopic: session.currentTopic,
+    nextCurriculumTopic: nextQuestion?.topic ?? null,
+    previousConversationHistory: session.conversationHistory,
+    latestCandidateAnswer,
+    currentQuestion: session.currentQuestion,
+    questionNumber: session.askedQuestionCount + 1,
+    remainingInterviewQuestions: session.questions.length - session.currentQuestionIndex - 1,
+  }
+}
+
+async function generateFirstReply(session, turnGenerator) {
+  const fallback = questionReply(session.questions[0])
+  const result = await turnGenerator(buildGeminiContext(session, null, session.questions[1]))
+  if (result.ok && result.turn.action === 'ask_followup' && turnMatchesTopic(result.turn, session.currentTopic)) {
+    setCurrentQuestion(session, result.turn.reply)
+    return result.turn.reply
+  }
+  return fallback
+}
+
+async function generateReplyAfterAnswer(session, latestCandidateAnswer, turnGenerator) {
+  const nextQuestion = session.questions[session.currentQuestionIndex + 1]
+  const result = await turnGenerator(buildGeminiContext(session, latestCandidateAnswer, nextQuestion))
+
+  if (result.ok && result.turn.action === 'ask_followup' && session.followUpCount < 1 && turnMatchesTopic(result.turn, session.currentTopic)) {
+    session.followUpCount += 1
+    setCurrentQuestion(session, result.turn.reply)
+    return { reply: result.turn.reply, advance: false }
+  }
+
+  // The backend, not Gemini, controls when the plan advances and when it completes.
+  if (nextQuestion) {
+    const fallback = questionReply(nextQuestion)
+    const reply = result.ok && result.turn.action === 'ask_next' && turnMatchesTopic(result.turn, nextQuestion.topic)
+      ? result.turn.reply
+      : fallback
+    return { reply, advance: true }
+  }
+
+  return { advance: true }
+}
+
 function buildFeedback(session) {
   const uniqueDays = new Set(session.answers.map((answer) => answer.day))
   const plan = session.topicPlan
@@ -81,7 +134,7 @@ function buildFeedback(session) {
   }
 }
 
-export function initializeInterview({ sessionId, candidate, curriculum }) {
+export async function initializeInterview({ sessionId, candidate, curriculum, turnGenerator = generateInterviewTurn }) {
   validateCandidate(candidate)
   const topicPlan = createTopicPlan(candidate, curriculum)
   const questions = createQuestions(chooseTopics(topicPlan))
@@ -91,17 +144,24 @@ export function initializeInterview({ sessionId, candidate, curriculum }) {
   }
 
   const session = createSession({ sessionId, candidate, topicPlan, questions })
-  const reply = `Welcome. Let's begin your interview. ${questionReply(questions[0])}`
-  addTurn(session, 'interviewer', reply)
+  const firstQuestion = await generateFirstReply(session, turnGenerator)
+  const reply = `Welcome. Let's begin your interview. ${firstQuestion}`
+  recordInterviewerQuestion(session, reply)
   return { reply, done: false }
 }
 
-export function processInterviewAnswer(session, message) {
+export async function processInterviewAnswer(session, message, turnGenerator = generateInterviewTurn) {
   if (session.status === 'completed') {
     return { reply: 'Interview completed.', done: true, feedback: buildFeedback(session) }
   }
 
   recordAnswer(session, message)
+  const generated = await generateReplyAfterAnswer(session, message, turnGenerator)
+  if (!generated.advance) {
+    recordInterviewerQuestion(session, generated.reply)
+    return { reply: generated.reply, done: false }
+  }
+
   advanceSession(session)
 
   const nextQuestion = session.questions[session.currentQuestionIndex]
@@ -112,7 +172,8 @@ export function processInterviewAnswer(session, message) {
     return { reply, done: true, feedback: buildFeedback(session) }
   }
 
-  const reply = questionReply(nextQuestion)
-  addTurn(session, 'interviewer', reply)
+  const reply = generated.reply
+  setCurrentQuestion(session, reply)
+  recordInterviewerQuestion(session, reply)
   return { reply, done: false }
 }
