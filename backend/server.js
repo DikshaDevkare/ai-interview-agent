@@ -46,7 +46,17 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' })
 })
 
+app.get('/api/candidates/:candidateId', (req, res) => {
+  const candidate = findCandidateById(req.params.candidateId)
 
+  if (!candidate) {
+    return res.status(404).json({
+      error: 'Candidate not found',
+    })
+  }
+
+  res.json(candidate)
+})
 // ---------------------------------------------------------
 // Get candidate
 // ---------------------------------------------------------
